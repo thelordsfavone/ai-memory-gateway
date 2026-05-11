@@ -159,6 +159,48 @@ async def lifespan(app: FastAPI):
             await ensure_conversation_titles_table()
             count = await get_all_memories_count()
             print(f"✅ 记忆系统已启动，当前记忆数量：{count}")
+            
+            # 从数据库恢复面板配置（重启后保持Dashboard修改过的值）
+            try:
+                db_cfg = await get_all_gateway_config()
+                if db_cfg:
+                    _RESTORE_MAIN = {
+                        "API_BASE_URL": str, "API_KEY": str, "DEFAULT_MODEL": str,
+                        "MEMORY_ENABLED": lambda v: _parse_bool(v),
+                        "MAX_MEMORIES_INJECT": int, "MEMORY_EXTRACT_INTERVAL": int,
+                        "CACHE_PARTITION_ENABLED": lambda v: _parse_bool(v),
+                        "CACHE_PARTITION_X": int, "CACHE_PARTITION_TRIGGER": str,
+                        "CACHE_PARTITION_WINDOW": int, "CACHE_SUMMARY_MODEL": str,
+                        "FORCE_STREAM": lambda v: _parse_bool(v),
+                        "REASONING_EFFORT": str,
+                    }
+                    _RESTORE_DB = {
+                        "EMBEDDING_API_KEY": str, "EMBEDDING_BASE_URL": str,
+                        "EMBEDDING_MODEL": str, "EMBEDDING_DIM": int,
+                        "MIN_SCORE_THRESHOLD": float,
+                        "MEMORY_VECTOR_ENABLED": lambda v: _parse_bool(v),
+                        "MEMORY_HW_KEYWORD": float, "MEMORY_HW_SEMANTIC": float,
+                        "MEMORY_HW_IMPORTANCE": float, "MEMORY_HW_RECENCY": float,
+                        "MEMORY_SEMANTIC_THRESHOLD": float,
+                    }
+                    restored = []
+                    for key, val in db_cfg.items():
+                        if not val:
+                            continue
+                        if key in _RESTORE_MAIN:
+                            globals()[key] = _RESTORE_MAIN[key](val)
+                            restored.append(key)
+                        elif key in _RESTORE_DB:
+                            setattr(_db_module, key, _RESTORE_DB[key](val))
+                            restored.append(key)
+                        elif key == "MEMORY_MODEL":
+                            os.environ["MEMORY_MODEL"] = str(val)
+                            restored.append(key)
+                    if restored:
+                        print(f"🔄 从数据库恢复 {len(restored)} 项面板配置: {', '.join(restored)}")
+            except Exception as e:
+                print(f"[warning] 恢复面板配置失败: {e}")
+            
             if not MEMORY_EXTRACT_ENABLED:
                 print(f"ℹ️  记忆提取+注入已关闭（MEMORY_EXTRACT_ENABLED=false）")
             
@@ -2261,6 +2303,8 @@ async def get_settings():
             # 缓存分区
             "CACHE_PARTITION_ENABLED": _parse_bool(db.get("CACHE_PARTITION_ENABLED"), CACHE_PARTITION_ENABLED),
             "CACHE_PARTITION_X":       int(db.get("CACHE_PARTITION_X") or CACHE_PARTITION_X),
+            "CACHE_PARTITION_TRIGGER": db.get("CACHE_PARTITION_TRIGGER") or CACHE_PARTITION_TRIGGER,
+            "CACHE_PARTITION_WINDOW":  int(db.get("CACHE_PARTITION_WINDOW") or CACHE_PARTITION_WINDOW),
             "CACHE_SUMMARY_MODEL":     db.get("CACHE_SUMMARY_MODEL") or str(CACHE_SUMMARY_MODEL),
 
             # 向量搜索（开源版用 EMBEDDING_API_KEY + EMBEDDING_BASE_URL）
@@ -2309,6 +2353,8 @@ async def save_settings(request: Request):
             "MEMORY_EXTRACT_INTERVAL": int,
             "CACHE_PARTITION_ENABLED": lambda v: _parse_bool(v),
             "CACHE_PARTITION_X":     int,
+            "CACHE_PARTITION_TRIGGER": str,
+            "CACHE_PARTITION_WINDOW": int,
             "CACHE_SUMMARY_MODEL":   str,
             "FORCE_STREAM":          lambda v: _parse_bool(v),
             "REASONING_EFFORT":      str,
