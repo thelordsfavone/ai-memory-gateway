@@ -16,6 +16,7 @@ import os
 import json
 import uuid
 import asyncio
+import secrets
 import httpx
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
@@ -46,6 +47,13 @@ DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "anthropic/claude-sonnet-4")
 
 # 网关端口
 PORT = int(os.getenv("PORT", "8080"))
+
+# 网关访问密钥（强烈建议设置！）
+# 设置后所有非公开端点都需要鉴权，二选一：
+#   - 请求头方式：X-Gateway-Key: 你的密钥（客户端/API 调用）
+#   - URL参数方式：?gateway_key=你的密钥（方便浏览器访问 dashboard）
+# 不设置则跳过鉴权（兼容旧部署，仅建议内网环境使用）
+GATEWAY_SECRET = os.getenv("GATEWAY_SECRET", "")
 
 # 记忆系统开关（数据库出问题时可以临时关掉）
 MEMORY_ENABLED = os.getenv("MEMORY_ENABLED", "false").lower() == "true"
@@ -242,6 +250,53 @@ app = FastAPI(title="AI Memory Gateway", version="2.0.0", lifespan=lifespan)
 # 静态文件和模板配置
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
+
+
+# ============================================================
+# 网关鉴权中间件
+# ============================================================
+
+# 不需要鉴权的路径（根路径精确匹配，其余按前缀匹配）
+PUBLIC_PATHS = ("/", "/static/", "/health", "/favicon.ico")
+
+@app.middleware("http")
+async def gateway_auth_middleware(request: Request, call_next):
+    """检查 GATEWAY_SECRET，保护所有非公开端点"""
+    # 未设置密钥时跳过鉴权（兼容旧部署，但会打印警告）
+    if not GATEWAY_SECRET:
+        if not hasattr(gateway_auth_middleware, "_warned"):
+            print("⚠️  GATEWAY_SECRET 未设置！所有 API 端点不受保护！")
+            print("⚠️  请在环境变量中设置 GATEWAY_SECRET 以启用鉴权")
+            gateway_auth_middleware._warned = True
+        return await call_next(request)
+
+    path = request.url.path
+
+    # 公开路径不需要鉴权（根路径精确匹配）
+    if path == "/":
+        return await call_next(request)
+    for prefix in PUBLIC_PATHS[1:]:
+        if path.startswith(prefix):
+            return await call_next(request)
+
+    # OPTIONS 预检请求放行（CORS 需要）
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    # 从 header 或 query 参数获取密钥
+    provided_key = (
+        request.headers.get("X-Gateway-Key", "")
+        or request.query_params.get("gateway_key", "")
+    )
+
+    # compare_digest 防时序侧信道攻击
+    if not secrets.compare_digest(provided_key, GATEWAY_SECRET):
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Unauthorized. Provide X-Gateway-Key header or gateway_key parameter."},
+        )
+
+    return await call_next(request)
 
 
 # ============================================================
