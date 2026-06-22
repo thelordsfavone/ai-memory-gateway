@@ -36,5 +36,4 @@ jobs:
         env:
           GATEWAY_URL: ${{ secrets.GATEWAY_URL }}
           GATEWAY_KEY: ${{ secrets.GATEWAY_KEY }}
-          MODEL: ${{ secrets.MODEL }}
           BARK_KEY: ${{ secrets.BARK_KEY }}
