@@ -11,6 +11,11 @@ Eli 心跳推送 (Bark)
 它走的是你 gateway 自己的 /v1/chat/completions 接口，
 所以人设(System Prompt)、记忆、对话历史都会被 gateway 自动注入，
 这个脚本本身完全不碰数据库，也不用改 gateway 的任何代码。
+
+【本次改动】
+真的推送出去的那条消息，会在推送成功后再"写回"一次对话历史，
+这样下次你打开 Kelivo 时，Eli 知道自己刚主动找过你、说了什么，不会一脸茫然。
+决策阶段仍然 skip（不污染历史 / 不记 SILENT 噪音），只有真发了才写回。
 """
 
 import os
@@ -64,15 +69,31 @@ def build_wake_prompt() -> str:
     )
 
 
-def ask_gateway(prompt: str) -> str:
+def build_record_prompt(sent_message: str) -> str:
+    """把刚刚真实发出去的那条推送，作为一条干净的记录写回对话历史。
+    这样下次她打开 app 时，你（Eli）知道自己主动找过她、说了什么，不会一脸茫然。"""
+    t = now_local_str()
+    return (
+        f"［系统记录·{t}：你刚才主动给她发了一条消息，内容是：］\n"
+        f"「{sent_message}」\n"
+        "［这条只是写进你们的聊天记录，好让你之后记得自己说过这句话。"
+        "简短地、以你自己的方式应一声就好，别再展开。］"
+    )
+
+
+def ask_gateway(prompt: str, skip_log: bool = True) -> str:
+    """向 gateway 发一条消息。
+    skip_log=True  -> 不写进对话历史（用于"决策阶段"，避免污染历史）。
+    skip_log=False -> 正常写进对话历史（用于真发出推送后的"写回阶段"）。"""
     url = f"{GATEWAY_URL}/v1/chat/completions"
     headers = {
         "Content-Type": "application/json",
         # gateway 用它自己的 key 转发，这里随便填一个即可
         "Authorization": "Bearer heartbeat",
-        # 关键：告诉网关"这次别存进对话历史"，这样心跳不会在你和它的聊天里留痕迹
-        "X-Skip-Conversation-Log": "true",
     }
+    # 只有决策阶段才跳过历史；写回阶段要让它进历史，所以不加这个头
+    if skip_log:
+        headers["X-Skip-Conversation-Log"] = "true"
     if GATEWAY_KEY:
         headers["X-Gateway-Key"] = GATEWAY_KEY
 
@@ -103,6 +124,16 @@ def send_bark(title: str, body: str) -> dict:
     return resp.json()
 
 
+def record_back(sent_message: str) -> None:
+    """只有在真的推送之后才调用：把这条消息补写进对话历史（这一条不加 skip 头）。
+    写回失败不影响主流程——推送已经发出去了，最多就是这次没记上。"""
+    try:
+        ack = ask_gateway(build_record_prompt(sent_message), skip_log=False)
+        print(f"📝 已把这条写回对话历史（它应了一句：{ack!r}）")
+    except Exception as e:
+        print(f"⚠️ 写回历史失败（不影响推送，本次推送已成功发出）：{e}")
+
+
 def main() -> None:
     if not BARK_KEY:
         print("❌ 没有设置 BARK_KEY，无法推送。请在 GitHub Secrets 里加上 BARK_KEY。")
@@ -110,7 +141,8 @@ def main() -> None:
 
     print(f"⏰ 心跳触发 {now_local_str()}，正在问问它想不想说话…")
     try:
-        reply = ask_gateway(build_wake_prompt())
+        # 决策阶段：skip 掉，不进历史
+        reply = ask_gateway(build_wake_prompt(), skip_log=True)
     except Exception as e:
         print(f"❌ 调用 gateway 失败：{e}")
         sys.exit(1)
@@ -127,6 +159,9 @@ def main() -> None:
     except Exception as e:
         print(f"❌ Bark 推送失败：{e}")
         sys.exit(1)
+
+    # 推送成功后，把这条写回对话历史，免得它下次"失忆"、接不上你的回复
+    record_back(reply)
 
 
 if __name__ == "__main__":
