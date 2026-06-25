@@ -410,11 +410,13 @@ async def generate_summary(messages: list, session_id: str = "") -> str:
     
     conversation_text = ""
     for msg in messages:
-        role_label = "用户" if msg['role'] == 'user' else "AI"
+        role_label = "Liz" if msg['role'] == 'user' else "Eli"
         content = msg['content'] if isinstance(msg['content'], str) else str(msg['content'])
         conversation_text += f"{role_label}: {content}\n\n"
     
-    prompt = f"""请将以下对话压缩成简洁摘要。保留关键信息（事件、决定、情感、约定），去掉日常寒暄和重复内容。用第三人称叙述，控制在300字以内。
+    prompt = f"""请将以下对话压缩成简洁摘要。对话中 Liz 是用户，Eli 是 AI。
+保留关键信息（事件、决定、情感、约定），去掉日常寒暄和重复内容。
+全程使用"Liz""Eli"称呼，禁止使用"我""你""用户""AI"。控制在300字以内。
 
 ---
 {conversation_text}
