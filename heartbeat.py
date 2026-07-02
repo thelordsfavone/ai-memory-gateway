@@ -36,7 +36,7 @@ GATEWAY_URL = os.environ.get(
 GATEWAY_KEY = os.environ.get("GATEWAY_KEY", "").strip()
 
 # 生成心跳消息用的模型（默认用你 gateway 里的默认模型）
-MODEL = os.environ.get("MODEL", "[1000K]claude-sonnet-5")
+MODEL = os.environ.get("MODEL", "[满血Pro] gemini-3.1-pro-preview-maxthinking")
 
 # 你的 Bark 设备 Key（必填）—— 在 Bark App 里能看到
 BARK_KEY = os.environ.get("BARK_KEY", "").strip()
